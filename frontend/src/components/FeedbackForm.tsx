@@ -1,14 +1,18 @@
 import { useState } from "react";
 import { useAuth } from "../AuthContext";
+import { Toast } from "./Toast";
 import styles from "./FeedbackForm.module.css";
 
+interface Props {
+  onSubmit: () => void;
+}
+
 export function FeedbackForm({ onSubmit }: { onSubmit: () => void }) {
+  const { token } = useAuth();
   const [message, setMessage] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [error, setError] = useState("");
-  const { token } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -20,18 +24,15 @@ export function FeedbackForm({ onSubmit }: { onSubmit: () => void }) {
     e.preventDefault();
 
     if (!message.trim()) {
-      setError("Message is required.");
+      setToast({ message:"Message is required.", type:"error"});
       return;
     }
     if (message.length < 5) {
-      setError("Message must be at least 5 characters.");
+      setToast({ message: "Message must be at least 5 characters.", type:"error"});
       return;
     }
 
     setLoading(true);
-    setSuccess(false);
-    setError("");
-
     const formData = new FormData();
     formData.append("id", Date.now().toString());
     formData.append("message", message);
@@ -53,11 +54,10 @@ export function FeedbackForm({ onSubmit }: { onSubmit: () => void }) {
 
       setMessage("");
       setFile(null);
-      setSuccess(true);
-      setError("");
+      setToast({ message: "Feedback submitted successfully!", type: "success" });
       onSubmit();
     } catch (err: any) {
-      setError(err.message);
+      setToast({message: err.message, type:"error"});
     }finally {
     setLoading(false);
     }
@@ -88,8 +88,15 @@ export function FeedbackForm({ onSubmit }: { onSubmit: () => void }) {
           {loading ? "Submitting..." : "Submit"}
         </button>
       </form>
-      {success && <p className={styles.success}>Feedback submitted successfully!</p>}
-      {error && <p className={styles.error}>{error}</p>}
+      
+      {/* ✅ Toast notifications */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
     </div>
   );
 }

@@ -1,14 +1,13 @@
 # backend/main.py
-from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Form, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import shutil
 import os
-from fastapi.staticfiles import StaticFiles
 from uuid import uuid4
-from fastapi import Header
-
 
 app = FastAPI()
 
@@ -33,14 +32,19 @@ class Feedback(BaseModel):
 class User(BaseModel):
     username: str
     password: str
+    role: str = "user"
 
 fake_db: List[Feedback] = []
-authenticated_users = {"testuser": "password123"}
+authenticated_users = {
+    "testuser": {"password": "password123", "role": "user"},
+    "admin": {"password": "admin123", "role": "admin"},
+}
 auth_tokens = {}
 
 def fake_auth(user: User):
-    if authenticated_users.get(user.username) == user.password:
-        return True
+    user_record = authenticated_users.get(user.username)
+    if user_record and user_record["password"] == user.password:
+        return {"username": user.username, "role": user_record["role"]}
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
 def get_current_user(username: str = Form(...), password: str = Form(...)):
@@ -54,24 +58,42 @@ def verify_token(authorization: str = Header(...)):
     token = authorization[7:]
     if token not in auth_tokens:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    return auth_tokens[token]  # returns username
+    return auth_tokens[token]  
 
 @app.post("/login")
 def login(user: User):
-    if fake_auth(user):
-        token = str(uuid4())  # generate fake token
-        auth_tokens[token] = user.username
-        return {"token": token}
+    auth_info = fake_auth(user)
+    token = str(uuid4())
+    auth_tokens[token] = auth_info
+    return {"token": token}
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @app.get("/me")
 def get_current_user_info(authorization: str = Header(...)):
-    username = verify_token(authorization)
-    return {"username": username}
+    user = verify_token(authorization)
+    return {"username": user["username"], "role": user["role"]}
 
-@app.get("/feedback", response_model=List[Feedback])
-def get_feedback():
-    return fake_db
+@app.get("/feedback")
+def get_feedback(
+    q: Optional[str] = Query(None, description="Search query"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+):
+    filtered = fake_db
+
+    if q:
+        filtered = [f for f in fake_db if q.lower() in f.message.lower()]
+
+    total = len(filtered)
+
+    start = (page - 1) * page_size
+    end = start + page_size
+    items = filtered[start:end]
+
+    return JSONResponse(content={
+        "items": [f.dict() for f in items],  # convert Pydantic models to dict
+        "total": total
+    })
 
 @app.post("/feedback", response_model=Feedback)
 def submit_feedback(
@@ -111,7 +133,9 @@ def update_feedback(
 
 @app.delete("/feedback/{feedback_id}")
 def delete_feedback(feedback_id: int, authorization: str = Header(...)):
-    username = verify_token(authorization)
+    user = verify_token(authorization)
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admins only")
 
     global fake_db
     initial_len = len(fake_db)
